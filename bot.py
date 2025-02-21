@@ -8,7 +8,7 @@ from config import BOT_TOKEN
 bot = telebot.TeleBot(BOT_TOKEN)
 
 def get_random_meal():
-    """Получение случайного блюда через API"""
+    """Получение случайного блюда через API с ингредиентами, фотографией и ссылкой на видео"""
     try:
         response = requests.get('https://www.themealdb.com/api/json/v1/1/random.php', timeout=2)
         response.raise_for_status()  # Проверка на ошибки HTTP
@@ -18,9 +18,21 @@ def get_random_meal():
             return None
             
         meal = data['meals'][0]
+        
+        # Извлекаем ингредиенты (с перепроверкой на непустые строки)
+        ingredients = []
+        for i in range(1, 21):
+            ingredient = meal.get(f"strIngredient{i}")
+            measure = meal.get(f"strMeasure{i}")
+            if ingredient and ingredient.strip():
+                ingr_text = f"{measure.strip()} {ingredient.strip()}" if measure and measure.strip() else ingredient.strip()
+                ingredients.append(ingr_text)
+        
         return {
-            'name': meal['strMeal'],
-            'youtube': meal['strYoutube'] or "Ссылка на видео отсутствует"
+            'name': meal.get('strMeal'),
+            'youtube': meal.get('strYoutube') or "Ссылка на видео отсутствует",
+            'thumb': meal.get('strMealThumb'),
+            'ingredients': ingredients
         }
     except (requests.RequestException, json.JSONDecodeError, KeyError) as e:
         print(f"Ошибка при получении блюда: {e}")
@@ -79,17 +91,24 @@ def handle_text(message):
                                 loading_message.message_id)
             return
             
+        # Формируем inline-клавиатуру:
         markup = types.InlineKeyboardMarkup()
+        # Кнопка для добавления в избранное
         add_to_fav = types.InlineKeyboardButton('Добавить в избранное ⭐', 
                                                callback_data=f"add_{meal['name']}_{meal['youtube']}")
         markup.add(add_to_fav)
         
-        response = f"🍳 Блюдо: {meal['name']}\n📺 Видео рецепт: {meal['youtube']}"
-        # Редактируем сообщение о загрузке, заменяя его на результат
-        bot.edit_message_text(response, 
-                            message.chat.id, 
-                            loading_message.message_id, 
-                            reply_markup=markup)
+        # Формируем текстовый список ингредиентов с Markdown форматированием для копирования
+        ingredients_text = "\n".join(f"`• {ingr}`" for ingr in meal['ingredients'])
+        # Теперь ингредиенты отображаются в тексте, и их можно скопировать
+        
+        response = (f"🍳 Блюдо: {meal['name']}\n"
+                    f"📺 Видео рецепт: {meal['youtube']}\n\n"
+                    "Ингредиенты:\n" + ingredients_text)
+                    
+        # Удаляем сообщение о загрузке и отправляем фотографию с подписью и клавиатурой
+        bot.delete_message(message.chat.id, loading_message.message_id)
+        bot.send_photo(message.chat.id, meal['thumb'], caption=response, reply_markup=markup, parse_mode="Markdown")
         
     elif message.text == '⭐ Случайное из избранного':
         favorite = get_random_favorite(message.chat.id)
